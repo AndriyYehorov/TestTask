@@ -1,0 +1,149 @@
+﻿@page "/"
+@inject NavigationManager navigationManager
+@using Microsoft.AspNetCore.SignalR.Client;
+@using System.Text
+@using TestTask.Data
+@using TestTask.Hubs
+
+<h1>Real-Time Chat</h1>
+<hr />
+
+@if (!_isChatting)
+{
+    <p>
+        Enter your name to start chatting:
+    </p>
+
+    <input type="text" maxlength="32" @bind="@_username" />
+    <button type="button" @onclick="@Chat"><span class="oi oi-chat" aria-hidden="true"></span> Chat!</button>
+    
+    @if (_message != null)
+    {
+        <div class="invalid-feedback">@_message</div>
+        <small id="emailHelp" class="form-text text-muted">@_message</small>
+    }
+}
+else
+{    
+    <div class="alert alert-secondary mt-4" role="alert">
+        <span class="oi oi-person mr-2" aria-hidden="true"></span>
+        <span>You are connected as <b>@_username</b></span>
+        <button class="btn btn-sm btn-warning ml-md-auto" @onclick="@DisconnectAsync">Disconnect</button>
+    </div>
+   
+    <div id="scrollbox">
+        @foreach (var item in _messages)
+        {
+            @if (item.Text.StartsWith("[Info]"))
+            {
+                <div class="alert alert-info">@item.Text</div>
+            }
+            else
+            {
+                <div class=@defineMessageClass(item)>
+                    <div class="user">@item.Username</div>
+                    <div class="msg">@item.Text</div>
+                </div>
+            }
+        }
+        <hr />
+        <textarea class="input-lg" placeholder="enter your message" @bind="@_newMessage"></textarea>
+        <button class="btn btn-primary" @onclick="@(() => SendAsync(_newMessage,_username))">Send</button>
+    </div> 
+}
+
+@code {
+
+    private bool _isChatting = false;
+
+    private string? _username;
+
+    private string? _message;
+
+    private string? _newMessage;
+
+    private List<Message> _messages = new List<Message>();
+
+    private string? _hubUrl;
+    private HubConnection? _hubConnection;
+
+    public async Task Chat()
+    {        
+        if (string.IsNullOrWhiteSpace(_username))
+        {
+            _message = "Please enter a name";
+            return;
+        };
+
+        try
+        {            
+            _isChatting = true;
+            await Task.Delay(10);
+
+            _messages.Clear();
+
+            string baseUrl = navigationManager.BaseUri;
+
+            _hubUrl = baseUrl.TrimEnd('/') + ChatHub.HubUrl;
+
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(_hubUrl)                  
+                .Build();
+
+            _hubConnection.On<Message>("Broadcast", BroadcastMessage);
+
+            await _hubConnection.StartAsync();
+
+            await SendAsync($"[Info] {_username} joined chat room.", "app");
+        }
+        catch (Exception e)
+        {
+            _message = $"ERROR: Failed to start chat client: {e.Message}";
+            _isChatting = false;
+        }
+    }
+
+    private void BroadcastMessage(Message message)
+    {       
+        _messages.Add(message);
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task DisconnectAsync()
+    {
+        if (_isChatting)
+        {
+            await SendAsync($"[Notice] {_username} left chat room.", "app");
+
+            await _hubConnection.StopAsync();
+            await _hubConnection.DisposeAsync();  
+
+            _hubConnection = null;
+            _isChatting = false;
+        }
+    }
+
+    private async Task SendAsync(string message, string username)
+    {
+        if (_isChatting && !string.IsNullOrWhiteSpace(message))
+        {
+            await _hubConnection.SendAsync("Broadcast", username, message);
+
+            _newMessage = string.Empty;
+        }
+    }    
+
+    private string defineMessageClass(Message message)
+    {       
+        var sb = new StringBuilder();
+
+        sb.Append(message.Username == _username ? "sent" : "received");
+
+        sb.Append(" ");
+
+        sb.Append(message.Sentiment.ToLower());
+
+        return sb.ToString();
+    }
+}
